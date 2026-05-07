@@ -7,9 +7,19 @@ via Docker, in tensor-parallel.
 The MTP support is the cherry-pick of upstream PR
 [vllm-project/vllm#41745](https://github.com/vllm-project/vllm/pull/41745)
 plus the `Gemma4Proposer` adapter at `vllm/v1/spec_decode/gemma4.py`. With
-hybrid KV cache + fp8 KV cache + MTP γ=4, this setup serves the full
-**262 144 token (256 k) native context** at ≥ 1× concurrency on dual
+hybrid KV cache enabled and MTP γ=4, this setup serves a
+**163 840 token (160 k) context** with concurrency headroom on dual
 Battlemage G31 (32 GB each) cards.
+
+> **Note on KV cache dtype.** An earlier version of this recipe used
+> `--kv-cache-dtype fp8_e4m3` to fit the full 262 144-token native
+> context. That config booted, but bench measurements showed steady-state
+> decode TPS dropping ~30–46 % vs bf16 KV cache (the gap grew with
+> context length, which is the signature of per-attention-step dequant
+> overhead). The 160 k bf16 config below is the better trade-off for
+> interactive use; bump `--max-model-len` lower for slightly more decode
+> headroom, or re-enable `--kv-cache-dtype fp8_e4m3` and `--max-model-len
+> 262144` if you need maximum context and accept the decode penalty.
 
 ## Hardware / software
 
@@ -57,10 +67,9 @@ The serving args used by both launchers:
 --tensor-parallel-size 2
 --enforce-eager
 --attention-backend FLASH_ATTN
---max-model-len 262144
+--max-model-len 163840
 --gpu-memory-utilization 0.95
 --no-disable-hybrid-kv-cache-manager
---kv-cache-dtype fp8_e4m3
 --enable-prefix-caching
 --max-num-seqs 16
 --max-num-batched-tokens 8192
@@ -76,11 +85,13 @@ The serving args used by both launchers:
 - `--no-disable-hybrid-kv-cache-manager` — without this, Gemma 4's 51 sliding
   attention layers get charged full per-token KV memory regardless of the
   1024-token sliding window. With it, only the 9 full-attention layers scale
-  with sequence length, dropping per-token KV cost from ~150 KiB to ~26 KiB
-  (with fp8 cache).
-- `--kv-cache-dtype fp8_e4m3` — halves KV memory; required to fit 256 k
-  context on 64 GB total VRAM with concurrency headroom. Verified that XPU
-  FLASH_ATTN accepts this dtype at boot.
+  with sequence length, dropping per-token KV cost from ~150 KiB to ~54 KiB
+  at bf16. That's the only reason 160 k context fits with concurrency
+  headroom on 64 GB total VRAM.
+- `--max-model-len 163840` (160 k) is the sweet spot here at bf16 KV cache.
+  vLLM's auto-estimate said ~172 544 was the ceiling at `--gpu-memory-utilization
+  0.95`; 160 k is a clean number that leaves room for prefix caching and
+  draft-model overhead without OOM under load.
 
 ## Boot sanity-check
 
@@ -88,8 +99,8 @@ After launch, look for these lines in `~/llama-server.log`:
 
 ```text
 Available KV cache memory: 10.12 GiB
-GPU KV cache size: 391,845 tokens
-Maximum concurrency for 262,144 tokens per request: 1.49x
+GPU KV cache size: 169,314 tokens
+Maximum concurrency for 163,840 tokens per request: 1.03x
 Gemma4 MTP: draft layer 0 (sliding_attention) -> language_model.model.layers.58.self_attn.attn
 Gemma4 MTP: draft layer 1 (sliding_attention) -> language_model.model.layers.58.self_attn.attn
 Gemma4 MTP: draft layer 2 (sliding_attention) -> language_model.model.layers.58.self_attn.attn
@@ -101,12 +112,9 @@ cross-model KV sharing — that's the core of the speculative decoder.
 
 ## Caveats
 
-- vLLM warns about the fp8 KV cache's potential accuracy drop without proper
-  scaling factors. If you care about Gemma 4 quality at fp8 KV, run an eval
-  on your workload before relying on it.
 - This branch is **not** in upstream vLLM. The Gemma 4 MTP commit
   (`[Spec Decode] Add Gemma4 MTP speculative decoding with centroids
   masking`) sits on top of vLLM main as of early May 2026 and tracks
   upstream PR #41745.
 - Built and validated on Intel Arc Pro B70 32 GB. Smaller-VRAM Battlemage
-  cards (B60 24 GB) likely need `--max-model-len` bumped down to ≤ 131072.
+  cards (B60 24 GB) likely need `--max-model-len` bumped down to ≤ 65536.

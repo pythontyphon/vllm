@@ -15,10 +15,9 @@ docker run -d --rm --name vllm-gemma \
     --tensor-parallel-size 2 \
     --enforce-eager \
     --attention-backend FLASH_ATTN \
-    --max-model-len 262144 \
+    --max-model-len 163840 \
     --gpu-memory-utilization 0.95 \
     --no-disable-hybrid-kv-cache-manager \
-    --kv-cache-dtype fp8_e4m3 \
     --enable-prefix-caching \
     --max-num-seqs 16 \
     --max-num-batched-tokens 8192 \
