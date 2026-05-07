@@ -17,6 +17,7 @@ from vllm.entrypoints.openai.engine.protocol import (
     OpenAIBaseModel,
     StreamOptions,
     StructuralTagResponseFormat,
+    TimingsInfo,
     UsageInfo,
 )
 from vllm.exceptions import VLLMValidationError
@@ -481,6 +482,7 @@ class CompletionResponse(OpenAIBaseModel):
     usage: UsageInfo
 
     # vLLM-specific fields that are not in OpenAI spec
+    timings: TimingsInfo | None = None
     kv_transfer_params: dict[str, Any] | None = Field(
         default=None, description="KVTransfer parameters."
     )
@@ -512,6 +514,7 @@ class CompletionStreamResponse(OpenAIBaseModel):
     model: str
     choices: list[CompletionResponseStreamChoice]
     usage: UsageInfo | None = Field(default=None)
+    timings: TimingsInfo | None = None
     # Set only on the final chunk of a stream to mirror non-streaming responses
     # without the per-chunk serialization overhead.
     system_fingerprint: str | None = None

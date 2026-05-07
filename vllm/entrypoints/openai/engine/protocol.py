@@ -102,6 +102,20 @@ class PromptTokenUsageInfo(OpenAIBaseModel):
     cached_tokens: int | None = None
 
 
+class TimingsInfo(OpenAIBaseModel):
+    """llama.cpp-compatible timing information for prompt processing
+    and token generation speed."""
+
+    prompt_n: int = 0
+    prompt_ms: float = 0.0
+    prompt_per_token_ms: float = 0.0
+    prompt_per_second: float = 0.0
+    predicted_n: int = 0
+    predicted_ms: float = 0.0
+    predicted_per_token_ms: float = 0.0
+    predicted_per_second: float = 0.0
+
+
 class UsageInfo(OpenAIBaseModel):
     prompt_tokens: int = 0
     total_tokens: int = 0
@@ -112,6 +126,46 @@ class UsageInfo(OpenAIBaseModel):
 class RequestResponseMetadata(BaseModel):
     request_id: str
     final_usage_info: UsageInfo | None = None
+
+
+def build_timings_info(
+    metrics,
+    num_prompt_tokens: int,
+    num_generated_tokens: int,
+) -> TimingsInfo | None:
+    """Build TimingsInfo from engine RequestStateStats metrics."""
+    if metrics.scheduled_ts == 0.0 or metrics.first_token_ts == 0.0:
+        return None
+
+    prefill_time_s = metrics.first_token_ts - metrics.scheduled_ts
+    prefill_ms = prefill_time_s * 1000.0
+
+    decode_time_s = metrics.last_token_ts - metrics.first_token_ts
+    decode_ms = decode_time_s * 1000.0
+
+    # First generated token comes from prefill, so decode tokens = total - 1
+    decode_tokens = max(num_generated_tokens - 1, 0)
+
+    prompt_per_token_ms = (
+        prefill_ms / num_prompt_tokens if num_prompt_tokens > 0 else 0.0
+    )
+    prompt_per_second = (
+        num_prompt_tokens / prefill_time_s if prefill_time_s > 0 else 0.0
+    )
+
+    predicted_per_token_ms = decode_ms / decode_tokens if decode_tokens > 0 else 0.0
+    predicted_per_second = decode_tokens / decode_time_s if decode_time_s > 0 else 0.0
+
+    return TimingsInfo(
+        prompt_n=num_prompt_tokens,
+        prompt_ms=round(prefill_ms, 3),
+        prompt_per_token_ms=round(prompt_per_token_ms, 3),
+        prompt_per_second=round(prompt_per_second, 2),
+        predicted_n=decode_tokens,
+        predicted_ms=round(decode_ms, 3),
+        predicted_per_token_ms=round(predicted_per_token_ms, 3),
+        predicted_per_second=round(predicted_per_second, 2),
+    )
 
 
 class JsonSchemaResponseFormat(OpenAIBaseModel):

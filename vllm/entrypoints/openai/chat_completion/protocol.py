@@ -28,6 +28,7 @@ from vllm.entrypoints.openai.engine.protocol import (
     OpenAIBaseModel,
     StreamOptions,
     StructuralTagResponseFormat,
+    TimingsInfo,
     ToolCall,
     UsageInfo,
 )
@@ -105,6 +106,7 @@ class ChatCompletionResponse(OpenAIBaseModel):
     usage: UsageInfo
 
     # vLLM-specific fields that are not in OpenAI spec
+    timings: TimingsInfo | None = None
     prompt_logprobs: list[dict[int, Logprob] | None] | None = None
     prompt_token_ids: list[int] | None = None
     kv_transfer_params: dict[str, Any] | None = Field(
@@ -129,6 +131,7 @@ class ChatCompletionStreamResponse(OpenAIBaseModel):
     model: str
     choices: list[ChatCompletionResponseStreamChoice]
     usage: UsageInfo | None = Field(default=None)
+    timings: TimingsInfo | None = None
     # Set only on the final chunk of a stream to mirror non-streaming responses
     # without the per-chunk serialization overhead.
     system_fingerprint: str | None = None

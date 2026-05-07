@@ -46,6 +46,7 @@ from vllm.entrypoints.openai.engine.protocol import (
     RequestResponseMetadata,
     ToolCall,
     UsageInfo,
+    build_timings_info,
 )
 from vllm.entrypoints.openai.engine.serving import (
     GenerationError,
@@ -1065,6 +1066,19 @@ class OpenAIServingChat(OpenAIServing):
                     ):
                         chunk.system_fingerprint = self.system_fingerprint
 
+                    # Attach timings on the terminal chunk so clients (e.g.
+                    # Open WebUI) that don't request include_usage still see
+                    # them — matches llama.cpp behavior.
+                    if (
+                        choice_data.finish_reason is not None
+                        and res.metrics is not None
+                    ):
+                        chunk.timings = build_timings_info(
+                            res.metrics,
+                            num_prompt_tokens,
+                            previous_num_tokens[i],
+                        )
+
                     # handle usage stats if requested & if continuous
                     if include_continuous_usage:
                         completion_tokens = previous_num_tokens[i]
@@ -1091,6 +1105,12 @@ class OpenAIServingChat(OpenAIServing):
                         cached_tokens=num_cached_tokens
                     )
 
+                timings = None
+                if res.metrics is not None:
+                    timings = build_timings_info(
+                        res.metrics, num_prompt_tokens, completion_tokens
+                    )
+
                 final_usage_chunk = ChatCompletionStreamResponse(
                     id=request_id,
                     object=chunk_object_type,
@@ -1098,6 +1118,7 @@ class OpenAIServingChat(OpenAIServing):
                     choices=[],
                     model=model_name,
                     usage=final_usage,
+                    timings=timings,
                     system_fingerprint=self.system_fingerprint,
                 )
                 final_usage_data = final_usage_chunk.model_dump_json(
@@ -1501,12 +1522,19 @@ class OpenAIServingChat(OpenAIServing):
 
         request_metadata.final_usage_info = usage
 
+        timings = None
+        if final_res.metrics is not None:
+            timings = build_timings_info(
+                final_res.metrics, num_prompt_tokens, num_generated_tokens
+            )
+
         response = ChatCompletionResponse(
             id=request_id,
             created=created_time,
             model=model_name,
             choices=choices,
             usage=usage,
+            timings=timings,
             system_fingerprint=self.system_fingerprint,
             prompt_logprobs=clamp_prompt_logprobs(final_res.prompt_logprobs),
             prompt_token_ids=(

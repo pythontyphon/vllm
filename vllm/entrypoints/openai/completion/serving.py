@@ -24,6 +24,7 @@ from vllm.entrypoints.openai.engine.protocol import (
     PromptTokenUsageInfo,
     RequestResponseMetadata,
     UsageInfo,
+    build_timings_info,
 )
 from vllm.entrypoints.openai.engine.serving import (
     GenerationError,
@@ -436,12 +437,21 @@ class OpenAIServingCompletion(OpenAIServing):
                 )
 
             if include_usage:
+                timings = None
+                if res.metrics is not None:
+                    timings = build_timings_info(
+                        res.metrics,
+                        total_prompt_tokens,
+                        total_completion_tokens,
+                    )
+
                 final_usage_chunk = CompletionStreamResponse(
                     id=request_id,
                     created=created_time,
                     model=model_name,
                     choices=[],
                     usage=final_usage_info,
+                    timings=timings,
                     system_fingerprint=self.system_fingerprint,
                 )
                 final_usage_data = final_usage_chunk.model_dump_json(
@@ -564,6 +574,13 @@ class OpenAIServingCompletion(OpenAIServing):
             )
 
         request_metadata.final_usage_info = usage
+
+        timings = None
+        if last_final_res and last_final_res.metrics is not None:
+            timings = build_timings_info(
+                last_final_res.metrics, num_prompt_tokens, num_generated_tokens
+            )
+
         if final_res_batch:
             kv_transfer_params = final_res_batch[0].kv_transfer_params
         return CompletionResponse(
@@ -572,6 +589,7 @@ class OpenAIServingCompletion(OpenAIServing):
             model=model_name,
             choices=choices,
             usage=usage,
+            timings=timings,
             system_fingerprint=self.system_fingerprint,
             kv_transfer_params=kv_transfer_params,
         )
