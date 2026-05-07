@@ -28,8 +28,26 @@ Battlemage G31 (32 GB each) cards.
   not let it upgrade to 2026.x)
 - HuggingFace `transformers` from `main` (PR #45788 added the
   `gemma4_assistant` model type, merged 2026-05-05)
+- `vllm-xpu-kernels >= 0.1.7` (carries decode-attention fixes from PRs
+  #204, #257, #308, #318)
 - vLLM XPU base image built from `Dockerfile.xpu`
 - Linux kernel with i915 / xe driver supporting Battlemage
+
+## Open upstream PRs included in this branch
+
+This branch carries two open upstream vLLM PRs as cherry-picks beyond
+the Gemma 4 MTP commit:
+
+- [vllm-project/vllm#40327](https://github.com/vllm-project/vllm/pull/40327)
+  — adds `USE_TD` constexpr to the unified Triton attention path,
+  enabling HW 2D block reads on Intel Xe2/Xe3. Auto-enables on XPU,
+  opt-out via `VLLM_TRITON_ATTN_USE_TD=0`. Helps the
+  `--attention-backend TRITON_ATTN` path. (We bench FLASH_ATTN below
+  because it's faster on this hardware regardless, but anyone using
+  TRITON_ATTN gets the win.)
+- [vllm-project/vllm#40356](https://github.com/vllm-project/vllm/pull/40356)
+  — removes a forced contiguous-copy of Q/K/V per FLASH_ATTN call on
+  XPU. Worth ~+9 % at 16 k context in our bench, neutral elsewhere.
 
 ## Build the image
 
@@ -118,3 +136,28 @@ cross-model KV sharing — that's the core of the speculative decoder.
   upstream PR #41745.
 - Built and validated on Intel Arc Pro B70 32 GB. Smaller-VRAM Battlemage
   cards (B60 24 GB) likely need `--max-model-len` bumped down to ≤ 65536.
+
+### Known long-context decode bottleneck
+
+Empirical bench: decode TPS at γ=4 falls from ~58 TPS at ctx ≤ 4 k to
+~15 TPS at ctx 65 k and ~9 TPS at ctx 131 k. The slope is ~7× steeper
+than memory-bandwidth alone predicts (`9 full-attn layers × KV bytes / 912
+GB/s aggregate`), which means the gap is software, not hardware.
+
+This is tracked upstream by [vllm-xpu-kernels#271](https://github.com/vllm-project/vllm-xpu-kernels/issues/271)
+(another B70 user diagnosed the kernel-internal causes — `BLOCK_KV=4`
+hardcoded, `num_warps=1` on decode stage 1 underutilizing BMG's 256
+EUs, software dequant per attention step). [Issue #185](https://github.com/vllm-project/vllm-xpu-kernels/issues/185)
+is the umbrella decode-perf tracker.
+
+Things we tried that didn't help:
+- `--attention-backend TRITON_ATTN` with USE_TD: 13–66 % slower than
+  FLASH_ATTN on this model.
+- `--kv-cache-dtype fp8_e4m3`: forces a chunked-prefill fallback (paged
+  decode fast path requires `!is_fp8kv`); penalty grows with context.
+- MTP γ=2 vs γ=4: γ=4 wins everywhere, so per-step MTP overhead isn't
+  the dominant cost.
+
+If you need predictable long-context decode TPS today, this is the wrong
+stack. If you can keep most of your traffic ≤ 4 k context, MTP delivers
+~2× over baseline at ~50 TPS sustained.
