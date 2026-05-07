@@ -1,0 +1,5 @@
+FROM vllm-xpu-env:mtp
+RUN /opt/venv/bin/pip install --no-cache-dir --upgrade git+https://github.com/huggingface/transformers.git@main \
+ && /opt/venv/bin/python -c "import transformers; print('transformers:', transformers.__version__); from transformers.models.gemma4_assistant import Gemma4AssistantConfig; print('Gemma4AssistantConfig OK')"
+COPY vllm /workspace/vllm/vllm
+COPY vllm /opt/venv/lib/python3.12/site-packages/vllm

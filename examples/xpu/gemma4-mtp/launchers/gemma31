@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+llmstop
+docker run -d --rm --name vllm-gemma \
+  --device /dev/dri:/dev/dri \
+  --shm-size=4g \
+  -e HF_HOME=/root/.cache/huggingface \
+  -e HF_HUB_CACHE=/root/.cache/huggingface/hub \
+  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
+  -v "$HOME/.cache/triton:/root/.triton" \
+  -v "$HOME/.cache/torch:/root/.cache/torch" \
+  -p 8080:8080 \
+  vllm-xpu-env:mtp \
+  RedHatAI/gemma-4-31B-it-FP8-Dynamic \
+    --host 0.0.0.0 --port 8080 \
+    --tensor-parallel-size 2 \
+    --enforce-eager \
+    --attention-backend FLASH_ATTN \
+    --max-model-len 262144 \
+    --gpu-memory-utilization 0.95 \
+    --no-disable-hybrid-kv-cache-manager \
+    --kv-cache-dtype fp8_e4m3 \
+    --enable-prefix-caching \
+    --max-num-seqs 16 \
+    --max-num-batched-tokens 8192 \
+    --default-chat-template-kwargs '{"enable_thinking":true}' \
+    --reasoning-parser gemma4 \
+    --speculative-config '{"model": "google/gemma-4-31B-it-assistant", "num_speculative_tokens": 4}' \
+  > /dev/null
+( docker logs -f vllm-gemma > "$HOME/llama-server.log" 2>&1 ) &
+disown
+echo "started gemma31 (container vllm-gemma) — log: ~/llama-server.log"
